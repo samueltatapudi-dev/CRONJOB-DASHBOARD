@@ -6,7 +6,7 @@ import {
   advanceNextRunAt,
   getFirstRunAt,
   isDue,
-} from "@cron-dashboard/shared";
+} from "../shared.js";
 
 import { AppError } from "../utils/appError.js";
 

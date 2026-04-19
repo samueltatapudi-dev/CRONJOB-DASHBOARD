@@ -2,7 +2,7 @@ import {
   STATUS,
   createSchedulePreview,
   getFirstRunAt,
-} from "@cron-dashboard/shared";
+} from "../shared.js";
 import { z } from "zod";
 
 import { AppError } from "../utils/appError.js";

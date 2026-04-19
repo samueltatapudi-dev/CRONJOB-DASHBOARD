@@ -4,7 +4,7 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
-  "main": "desktop/main.js",
+  "main": "desktop/main.cjs",
   "author": "Cron Job Dashboard",
   "scripts": {
     "postinstall": "npm --prefix backend install && npm --prefix frontend install",
@@ -14,15 +14,16 @@
     "build": "npm --prefix frontend run build",
     "desktop:dev": "npm run rebuild:desktop:native && concurrently -k \"VITE_API_URL=http://127.0.0.1:4100 npm --prefix frontend run dev -- --host 127.0.0.1 --strictPort\" \"wait-on http://127.0.0.1:5173 && DESKTOP_DEV_SERVER_URL=http://127.0.0.1:5173 electron .\"",
     "rebuild:desktop:native": "electron-rebuild -f -w better-sqlite3 -m backend",
-    "build:desktop": "npm run build && npm run rebuild:desktop:native && electron-builder --dir",
-    "dist:linux": "npm run build && npm run rebuild:desktop:native && electron-builder --linux deb AppImage",
+    "rebuild:backend:native": "npm --prefix backend rebuild better-sqlite3",
+    "build:desktop": "node scripts/build-desktop.mjs --dir",
+    "dist:linux": "node scripts/build-desktop.mjs --linux deb AppImage",
     "test": "npm --prefix backend run test",
-    "test:desktop-smoke": "node scripts/desktop-smoke.mjs"
+    "test:desktop-smoke": "npm run rebuild:backend:native && node scripts/desktop-smoke.mjs"
   },
   "devDependencies": {
     "@electron/rebuild": "^3.7.1",
     "concurrently": "^9.1.2",
-    "electron": "^36.2.1",
+    "electron": "37.10.3",
     "electron-builder": "^26.0.12",
     "wait-on": "^8.0.3"
   },

@@ -1,7 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 
-import { STATUS } from "@cron-dashboard/shared";
+import { STATUS } from "../shared.js";
 
 import { env } from "../config/env.js";
 import { db } from "./database.js";

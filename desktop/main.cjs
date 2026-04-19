@@ -1,35 +1,136 @@
-import { mkdir, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
-import os from "node:os";
-import { fileURLToPath } from "node:url";
+const { appendFileSync, mkdirSync } = require("node:fs");
+const { lstat, mkdir, readlink, rm, writeFile } = require("node:fs/promises");
+const { dirname, join, resolve } = require("node:path");
+const os = require("node:os");
+const { kill } = require("node:process");
 
-import {
+const {
   BrowserWindow,
   Menu,
   Tray,
   app,
   nativeImage,
-} from "electron";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
+} = require("electron");
 
 const PRODUCT_NAME = "Cron Job Dashboard";
 const DEFAULT_DESKTOP_PORT = "4100";
-const BACKGROUND_FLAG = "--background";
+const BACKGROUND_ENV_KEY = "CRON_JOB_DASHBOARD_BACKGROUND";
 
 let tray = null;
 let mainWindow = null;
 let backendRuntime = null;
 let isQuitting = false;
 let shutdownStarted = false;
+let lifecycleRegistered = false;
 
 function isBackgroundLaunch() {
-  return process.argv.includes(BACKGROUND_FLAG);
+  return process.env[BACKGROUND_ENV_KEY] === "1";
 }
 
 function isDesktopDev() {
   return Boolean(process.env.DESKTOP_DEV_SERVER_URL);
+}
+
+function writeDesktopLog(message, details) {
+  try {
+    const logDirectory = join(app.getPath("userData"), "logs");
+    const detailsSuffix = details ? ` ${JSON.stringify(details)}` : "";
+
+    mkdirSync(logDirectory, { recursive: true });
+    appendFileSync(
+      join(logDirectory, "desktop.log"),
+      `${new Date().toISOString()} ${message}${detailsSuffix}\n`,
+      "utf8",
+    );
+  } catch {
+    // Logging should never block app startup.
+  }
+}
+
+function getSingletonPaths() {
+  const userDataDir = app.getPath("userData");
+
+  return {
+    userDataDir,
+    cookiePath: join(userDataDir, "SingletonCookie"),
+    lockPath: join(userDataDir, "SingletonLock"),
+    socketPath: join(userDataDir, "SingletonSocket"),
+  };
+}
+
+function parseSingletonPid(lockTarget) {
+  const match = /-(\d+)$/.exec(lockTarget);
+
+  if (!match) {
+    return null;
+  }
+
+  return Number.parseInt(match[1], 10);
+}
+
+function isProcessAlive(pid) {
+  try {
+    kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error?.code === "EPERM";
+  }
+}
+
+async function readSymlinkTarget(linkPath) {
+  try {
+    const linkStats = await lstat(linkPath);
+
+    if (!linkStats.isSymbolicLink()) {
+      return null;
+    }
+
+    return await readlink(linkPath);
+  } catch {
+    return null;
+  }
+}
+
+async function clearStaleSingletonArtifacts() {
+  const { userDataDir, cookiePath, lockPath, socketPath } = getSingletonPaths();
+  const lockTarget = await readSymlinkTarget(lockPath);
+  const socketTarget = await readSymlinkTarget(socketPath);
+  const cookieTarget = await readSymlinkTarget(cookiePath);
+
+  if (!lockTarget && !socketTarget && !cookieTarget) {
+    return false;
+  }
+
+  const lockPid = lockTarget ? parseSingletonPid(lockTarget) : null;
+
+  if (lockPid != null && isProcessAlive(lockPid)) {
+    writeDesktopLog("singleton:lock-owned", { lockPid, lockTarget });
+    return false;
+  }
+
+  const resolvedSocketTarget = socketTarget
+    ? resolve(userDataDir, socketTarget)
+    : null;
+  const cleanupTargets = [
+    cookiePath,
+    lockPath,
+    socketPath,
+    cookieTarget ? resolve(userDataDir, cookieTarget) : null,
+    lockTarget ? resolve(userDataDir, lockTarget) : null,
+    resolvedSocketTarget,
+    resolvedSocketTarget ? dirname(resolvedSocketTarget) : null,
+  ].filter(Boolean);
+
+  await Promise.allSettled(
+    cleanupTargets.map((targetPath) => rm(targetPath, { force: true, recursive: true })),
+  );
+  writeDesktopLog("singleton:cleared-stale-artifacts", {
+    lockTarget,
+    socketTarget,
+    cookieTarget,
+  });
+
+  return true;
 }
 
 function createTrayIcon() {
@@ -69,7 +170,7 @@ async function ensureLinuxAutostartEntry() {
     "Version=1.0",
     `Name=${PRODUCT_NAME}`,
     "Comment=Run Cron Job Dashboard in the background",
-    `Exec=${execPath} ${BACKGROUND_FLAG}`,
+    `Exec=/usr/bin/env ${BACKGROUND_ENV_KEY}=1 ${execPath}`,
     `TryExec=${execPath}`,
     "Terminal=false",
     "StartupNotify=false",
@@ -113,8 +214,10 @@ async function ensureBackendStarted() {
     return backendRuntime;
   }
 
+  writeDesktopLog("backend:start-requested");
   const { startServer } = await import("../backend/src/server.js");
   backendRuntime = await startServer();
+  writeDesktopLog("backend:started", { url: backendRuntime.url });
   return backendRuntime;
 }
 
@@ -204,11 +307,12 @@ async function ensureWindow({ show } = { show: true }) {
     show: false,
     title: PRODUCT_NAME,
     webPreferences: {
-      preload: join(__dirname, "preload.js"),
+      preload: join(__dirname, "preload.cjs"),
       contextIsolation: true,
       nodeIntegration: false,
     },
   });
+  writeDesktopLog("window:created", { show });
 
   mainWindow.on("close", (event) => {
     if (isQuitting) {
@@ -220,25 +324,39 @@ async function ensureWindow({ show } = { show: true }) {
   });
 
   mainWindow.on("closed", () => {
+    writeDesktopLog("window:closed");
     mainWindow = null;
   });
 
+  mainWindow.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL) => {
+    writeDesktopLog("window:did-fail-load", {
+      errorCode,
+      errorDescription,
+      validatedURL,
+    });
+  });
+
+  mainWindow.webContents.on("render-process-gone", (_event, details) => {
+    writeDesktopLog("window:render-process-gone", details);
+  });
+
   await mainWindow.loadURL(windowUrl);
+  writeDesktopLog("window:loaded", { windowUrl });
 
   if (show) {
     mainWindow.show();
+    writeDesktopLog("window:shown");
   }
 
   return mainWindow;
 }
 
 function registerElectronLifecycle() {
-  const hasLock = app.requestSingleInstanceLock();
-
-  if (!hasLock) {
-    app.quit();
-    return false;
+  if (lifecycleRegistered) {
+    return;
   }
+
+  lifecycleRegistered = true;
 
   app.on("second-instance", () => {
     void app.whenReady().then(() => showMainWindow());
@@ -269,29 +387,72 @@ function registerElectronLifecycle() {
         app.exit(0);
       });
   });
+}
 
-  return true;
+async function acquireSingleInstanceLock() {
+  if (app.requestSingleInstanceLock()) {
+    writeDesktopLog("singleton:lock-acquired");
+    return true;
+  }
+
+  writeDesktopLog("singleton:lock-missed");
+  const clearedArtifacts = await clearStaleSingletonArtifacts();
+
+  if (!clearedArtifacts) {
+    writeDesktopLog("singleton:lock-held-by-active-instance");
+    app.quit();
+    return false;
+  }
+
+  if (app.requestSingleInstanceLock()) {
+    writeDesktopLog("singleton:lock-reacquired-after-cleanup");
+    return true;
+  }
+
+  writeDesktopLog("singleton:lock-retry-failed");
+  app.quit();
+  return false;
 }
 
 async function bootstrap() {
-  if (!registerElectronLifecycle()) {
+  writeDesktopLog("bootstrap:start", {
+    background: isBackgroundLaunch(),
+    packaged: app.isPackaged,
+  });
+
+  if (!(await acquireSingleInstanceLock())) {
     return;
   }
 
+  registerElectronLifecycle();
   await app.whenReady();
+  writeDesktopLog("bootstrap:ready");
   app.setName(PRODUCT_NAME);
 
   applyDesktopEnvironmentDefaults();
+  writeDesktopLog("bootstrap:environment-applied", {
+    host: process.env.HOST,
+    port: process.env.PORT,
+    staticDir: process.env.STATIC_DIR,
+  });
   await ensureBackendStarted();
   ensureTray();
+  writeDesktopLog("bootstrap:tray-ready");
   await ensureLinuxAutostartEntry();
+  writeDesktopLog("bootstrap:autostart-ready");
 
   if (!isBackgroundLaunch()) {
     await ensureWindow({ show: true });
   }
+
+  writeDesktopLog("bootstrap:complete");
 }
 
 bootstrap().catch((error) => {
+  writeDesktopLog("bootstrap:failed", {
+    message: error?.message,
+    stack: error?.stack,
+  });
   console.error("Failed to launch Cron Job Dashboard desktop runtime.", error);
   app.exit(1);
 });

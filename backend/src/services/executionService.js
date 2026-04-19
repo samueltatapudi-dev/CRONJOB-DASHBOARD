@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import path from "node:path";
 
-import { STATUS } from "@cron-dashboard/shared";
+import { STATUS } from "../shared.js";
 import { parse as parseCommandLine } from "shell-quote";
 
 import { env } from "../config/env.js";

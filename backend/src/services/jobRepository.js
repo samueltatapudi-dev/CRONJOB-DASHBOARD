@@ -1,4 +1,4 @@
-import { STATUS } from "@cron-dashboard/shared";
+import { STATUS } from "../shared.js";
 
 import { db } from "../db/database.js";
 import { AppError } from "../utils/appError.js";

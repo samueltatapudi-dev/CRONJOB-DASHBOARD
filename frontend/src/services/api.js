@@ -1,14 +1,14 @@
 import axios from "axios";
 
 function resolveBaseUrl() {
+  if (import.meta.env.PROD && typeof window !== "undefined") {
+    return window.location.origin;
+  }
+
   const override = import.meta.env.VITE_API_URL?.trim();
 
   if (override) {
     return override;
-  }
-
-  if (import.meta.env.PROD && typeof window !== "undefined") {
-    return window.location.origin;
   }
 
   return "http://localhost:4000";

@@ -3,7 +3,7 @@ import {
   advanceNextRunAt,
   createSchedulePreview,
   getFirstRunAt,
-} from "@cron-dashboard/shared";
+} from "../shared.js";
 
 import { env } from "../config/env.js";
 import { db } from "./database.js";
