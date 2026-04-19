@@ -32,13 +32,34 @@ function parseList(value, fallback) {
     .filter(Boolean);
 }
 
+function parseString(value, fallback = null) {
+  if (value == null) {
+    return fallback;
+  }
+
+  const trimmed = String(value).trim();
+  return trimmed || fallback;
+}
+
+function resolveFromBackend(relativeOrAbsolutePath, fallback = null) {
+  const targetPath = parseString(relativeOrAbsolutePath, fallback);
+
+  if (!targetPath) {
+    return null;
+  }
+
+  return resolve(BACKEND_DIR, targetPath);
+}
+
 export const env = {
+  host: parseString(process.env.HOST, "0.0.0.0"),
   port: parseInteger(process.env.PORT, 4000),
   clientOrigin: process.env.CLIENT_ORIGIN ?? "http://localhost:5173",
-  databasePath: resolve(
-    BACKEND_DIR,
-    process.env.DATABASE_PATH ?? "./data/cron-dashboard.sqlite",
+  databasePath: resolveFromBackend(
+    process.env.DATABASE_PATH,
+    "./data/cron-dashboard.sqlite",
   ),
+  staticDir: resolveFromBackend(process.env.STATIC_DIR),
   allowUnsafeCommands: parseBoolean(process.env.ALLOW_UNSAFE_COMMANDS, false),
   allowedExecutables: parseList(process.env.ALLOWED_EXECUTABLES, [
     "node",

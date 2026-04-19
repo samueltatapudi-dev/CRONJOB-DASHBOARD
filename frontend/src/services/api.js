@@ -1,7 +1,21 @@
 import axios from "axios";
 
+function resolveBaseUrl() {
+  const override = import.meta.env.VITE_API_URL?.trim();
+
+  if (override) {
+    return override;
+  }
+
+  if (import.meta.env.PROD && typeof window !== "undefined") {
+    return window.location.origin;
+  }
+
+  return "http://localhost:4000";
+}
+
 const client = axios.create({
-  baseURL: import.meta.env.VITE_API_URL ?? "http://localhost:4000",
+  baseURL: resolveBaseUrl(),
   headers: {
     "Content-Type": "application/json",
   },
